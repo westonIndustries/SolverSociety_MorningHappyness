@@ -1,0 +1,52 @@
+service: solver-society-backend
+
+provider:
+  name: aws
+  runtime: python3.9
+  region: us-east-1
+  environment:
+    TABLE_NAME: SolverRoutineTable
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:Query
+          Resource:
+            - "arn:aws:dynamodb:${aws:region}:*:table/SolverRoutineTable"
+
+functions:
+  createRoutine:
+    handler: handler.create_routine
+    events:
+      - http:
+          path: routines
+          method: post
+          cors: true
+
+  getRoutines:
+    handler: handler.get_routines
+    events:
+      - http:
+          path: routines
+          method: get
+          cors: true
+
+resources:
+  Resources:
+    SolverRoutineTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: SolverRoutineTable
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
