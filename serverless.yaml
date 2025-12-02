@@ -12,7 +12,7 @@ provider:
         - Effect: Allow
           Action:
             - dynamodb:PutItem
-            - dynamodb:Scan
+            - dynamodb:Query
           Resource:
             - "arn:aws:dynamodb:${aws:region}:*:table/SolverRoutineTable"
 
@@ -40,9 +40,13 @@ resources:
       Properties:
         TableName: SolverRoutineTable
         AttributeDefinitions:
-          - AttributeName: id
+          - AttributeName: userId
             AttributeType: S
+          - AttributeName: timestamp
+            AttributeType: N
         KeySchema:
-          - AttributeName: id
+          - AttributeName: userId
             KeyType: HASH
+          - AttributeName: timestamp
+            KeyType: RANGE
         BillingMode: PAY_PER_REQUEST
