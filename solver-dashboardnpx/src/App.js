@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Clock, Coffee, Zap, Save, RefreshCw, Server, AlertCircle, CheckCircle, User, LogIn, ChevronRight } from 'lucide-react';
+import { Activity, Clock, Coffee, Zap, Save, RefreshCw, Server, AlertCircle, CheckCircle, User, LogIn, ChevronRight, BookOpen, Dumbbell, Sparkles, ShowerHead } from 'lucide-react';
 
 // Main App Component
 export default function App() {
@@ -17,18 +17,21 @@ export default function App() {
   const [routines, setRoutines] = useState([]);
   const [notification, setNotification] = useState(null);
 
-  // Form State
+  // UPDATED: Form State now tracks specific durations
   const [formData, setFormData] = useState({
-    duration: 15,
     mood: 7,
     productivity: 7,
-    activities: {
-      coffee: false,
-      exercise: false,
-      reading: false,
-      meditation: false
+    hasCoffee: false,
+    durations: {
+      exercise: 0,
+      reading: 0,
+      meditation: 0,
+      core: 20 // Default "getting ready" time
     }
   });
+
+  // Calculate total duration derived from individual times
+  const totalDuration = Object.values(formData.durations).reduce((a, b) => parseInt(a) + parseInt(b), 0);
 
   // Load User from local storage on mount
   useEffect(() => {
@@ -66,10 +69,10 @@ export default function App() {
     setUserId('');
   };
 
-  const toggleActivity = (key) => {
+  const updateDuration = (key, value) => {
     setFormData(prev => ({
       ...prev,
-      activities: { ...prev.activities, [key]: !prev.activities[key] }
+      durations: { ...prev.durations, [key]: parseInt(value) || 0 }
     }));
   };
 
@@ -104,10 +107,16 @@ export default function App() {
 
     setLoading(true);
     
-    const activityList = Object.keys(formData.activities).filter(k => formData.activities[k]);
+    // Construct activities list based on durations > 0
+    const activityList = [];
+    if (formData.hasCoffee) activityList.push('coffee');
+    if (formData.durations.exercise > 0) activityList.push('exercise');
+    if (formData.durations.reading > 0) activityList.push('reading');
+    if (formData.durations.meditation > 0) activityList.push('meditation');
+    
     const payload = {
-      userId: userId, // Include User ID in payload
-      duration: parseInt(formData.duration),
+      userId: userId,
+      duration: totalDuration,
       mood: parseInt(formData.mood),
       productivity: parseInt(formData.productivity),
       activities: activityList,
@@ -126,7 +135,14 @@ export default function App() {
       if (!response.ok) throw new Error('Failed to submit');
 
       showNotification('success', 'Routine logged via Optimization Engine.');
-      setFormData(prev => ({...prev, mood: 5, productivity: 5}));
+      // Reset daily vars but keep core routine
+      setFormData(prev => ({
+        ...prev, 
+        mood: 7, 
+        productivity: 7,
+        hasCoffee: false,
+        durations: { ...prev.durations, exercise: 0, reading: 0, meditation: 0 }
+      }));
       fetchRoutines();
       setActiveTab('dashboard');
     } catch (error) {
@@ -286,36 +302,97 @@ export default function App() {
         {/* INPUT VIEW */}
         {activeTab === 'input' && (
           <div className="bg-slate-900/60 border border-white/10 rounded-2xl p-6 md:p-10 backdrop-blur-xl shadow-xl">
-            <div className="flex items-center gap-3 mb-8 pb-4 border-b border-white/5">
-                <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
-                    <Clock size={24} />
+            <div className="flex items-center justify-between mb-8 pb-4 border-b border-white/5">
+                <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+                        <Clock size={24} />
+                    </div>
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-100">Log Morning Allocation</h2>
+                        <p className="text-slate-400 text-sm">Input specific times to calculate total duration.</p>
+                    </div>
                 </div>
-                <div>
-                    <h2 className="text-xl font-bold text-slate-100">Log Morning Routine</h2>
-                    <p className="text-slate-400 text-sm">Record your metrics to calculate solver efficiency.</p>
+                {/* Total Duration Display */}
+                <div className="text-right">
+                    <p className="text-slate-400 text-xs uppercase tracking-wider font-semibold">Total Morning Time</p>
+                    <p className="text-3xl font-mono font-bold text-white leading-none mt-1">
+                        {totalDuration}<span className="text-lg text-indigo-400 ml-1">min</span>
+                    </p>
                 </div>
             </div>
             
             <form onSubmit={handleSubmit} className="space-y-10">
-              {/* Duration Slider */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-end">
-                  <label className="text-slate-300 font-medium text-sm uppercase tracking-wider">Total Duration</label>
-                  <span className="text-indigo-400 font-mono font-bold text-2xl">{formData.duration}<span className="text-sm text-slate-500 ml-1">min</span></span>
+              
+              {/* Activity Time Allocator */}
+              <div className="space-y-6">
+                <label className="text-slate-300 font-medium text-sm uppercase tracking-wider block">Time Allocation (Minutes)</label>
+                
+                {/* Exercise */}
+                <div className="bg-slate-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-indigo-300">
+                            <Dumbbell size={18} />
+                            <span className="font-medium">Exercise</span>
+                        </div>
+                        <span className="font-mono text-white bg-slate-700/50 px-2 py-1 rounded text-sm min-w-[3rem] text-center">{formData.durations.exercise}m</span>
+                    </div>
+                    <input 
+                        type="range" min="0" max="90" step="5"
+                        value={formData.durations.exercise}
+                        onChange={(e) => updateDuration('exercise', e.target.value)}
+                        className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-indigo-500"
+                    />
                 </div>
-                <input 
-                  type="range" 
-                  min="5" 
-                  max="60" 
-                  step="1"
-                  value={formData.duration}
-                  onChange={(e) => setFormData({...formData, duration: e.target.value})}
-                  className="w-full h-3 bg-slate-800 rounded-full appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all border border-slate-700/50"
-                />
-                <div className="flex justify-between text-xs text-slate-600 font-mono">
-                    <span>5 min</span>
-                    <span>30 min</span>
-                    <span>60 min</span>
+
+                {/* Reading */}
+                <div className="bg-slate-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-indigo-300">
+                            <BookOpen size={18} />
+                            <span className="font-medium">Reading</span>
+                        </div>
+                        <span className="font-mono text-white bg-slate-700/50 px-2 py-1 rounded text-sm min-w-[3rem] text-center">{formData.durations.reading}m</span>
+                    </div>
+                    <input 
+                        type="range" min="0" max="90" step="5"
+                        value={formData.durations.reading}
+                        onChange={(e) => updateDuration('reading', e.target.value)}
+                        className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-indigo-500"
+                    />
+                </div>
+
+                {/* Meditation */}
+                <div className="bg-slate-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-indigo-300">
+                            <Sparkles size={18} />
+                            <span className="font-medium">Meditation</span>
+                        </div>
+                        <span className="font-mono text-white bg-slate-700/50 px-2 py-1 rounded text-sm min-w-[3rem] text-center">{formData.durations.meditation}m</span>
+                    </div>
+                    <input 
+                        type="range" min="0" max="60" step="5"
+                        value={formData.durations.meditation}
+                        onChange={(e) => updateDuration('meditation', e.target.value)}
+                        className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-indigo-500"
+                    />
+                </div>
+
+                {/* Core/Misc */}
+                <div className="bg-slate-800/40 p-4 rounded-xl border border-white/5 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-slate-400">
+                            <ShowerHead size={18} />
+                            <span className="font-medium">Core Routine (Shower, Prep)</span>
+                        </div>
+                        <span className="font-mono text-white bg-slate-700/50 px-2 py-1 rounded text-sm min-w-[3rem] text-center">{formData.durations.core}m</span>
+                    </div>
+                    <input 
+                        type="range" min="5" max="60" step="5"
+                        value={formData.durations.core}
+                        onChange={(e) => updateDuration('core', e.target.value)}
+                        className="w-full h-2 bg-slate-700 rounded-full appearance-none cursor-pointer accent-slate-500"
+                    />
                 </div>
               </div>
 
@@ -356,30 +433,23 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Activities Toggles */}
+              {/* Coffee Toggle */}
               <div>
-                <label className="block text-slate-300 font-medium text-sm uppercase tracking-wider mb-4">Activities Completed</label>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {Object.keys(formData.activities).map(key => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => toggleActivity(key)}
-                      className={`relative p-4 rounded-xl border flex flex-col items-center gap-3 transition-all duration-200 ${
-                        formData.activities[key] 
-                          ? 'bg-indigo-600/20 border-indigo-500/50 text-indigo-200 shadow-[0_0_20px_rgba(99,102,241,0.15)]' 
-                          : 'bg-slate-800/40 border-white/5 text-slate-500 hover:bg-slate-800 hover:border-white/10'
-                      }`}
-                    >
-                      {formData.activities[key] && (
-                        <div className="absolute top-2 right-2 text-indigo-400">
-                          <CheckCircle size={14} />
-                        </div>
-                      )}
-                      <span className="capitalize font-medium">{key}</span>
-                    </button>
-                  ))}
-                </div>
+                <button
+                    type="button"
+                    onClick={() => setFormData(prev => ({...prev, hasCoffee: !prev.hasCoffee}))}
+                    className={`w-full p-4 rounded-xl border flex items-center justify-between gap-3 transition-all duration-200 ${
+                    formData.hasCoffee
+                        ? 'bg-amber-900/20 border-amber-500/50 text-amber-200 shadow-[0_0_20px_rgba(245,158,11,0.1)]' 
+                        : 'bg-slate-800/40 border-white/5 text-slate-500 hover:bg-slate-800 hover:border-white/10'
+                    }`}
+                >
+                    <div className="flex items-center gap-3">
+                        <Coffee size={20} className={formData.hasCoffee ? "text-amber-400" : "text-slate-500"} />
+                        <span className="font-medium">Did you have coffee?</span>
+                    </div>
+                    {formData.hasCoffee && <CheckCircle size={20} className="text-amber-400" />}
+                </button>
               </div>
 
               <button 
