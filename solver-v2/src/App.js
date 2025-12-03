@@ -1,50 +1,82 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Clock, Coffee, Zap, Save, RefreshCw, Server, AlertCircle, CheckCircle, User, LogIn, ChevronRight, BookOpen, Dumbbell, Sparkles, ShowerHead } from 'lucide-react';
+import { Activity, Clock, Coffee, Zap, Save, RefreshCw, Server, AlertCircle, CheckCircle, User, LogIn, ChevronRight, BookOpen, Dumbbell, Sparkles, ShowerHead, Settings, LogOut, ShieldAlert, Calculator } from 'lucide-react';
+import { initializeApp } from "firebase/app";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "firebase/auth";
 
-// Main App Component
+// --- FIREBASE CONFIGURATION ---
+// The app checks for environment variables first.
+// If missing, it will allow manual entry in the UI for testing.
+const firebaseConfig = {
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID
+};
+
+// Initialize Firebase only if config is present
+let auth = null;
+try {
+  if (firebaseConfig.apiKey) {
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+  }
+} catch (error) {
+  console.error("Firebase init error:", error);
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('input');
   
-  // AUTOMATION UPDATE: Check for Environment Variable or Local Storage default
+  // API URL State
   const [apiUrl, setApiUrl] = useState(
     localStorage.getItem('solver_api_url') || process.env.REACT_APP_API_URL || ''
   );
   
-  const [userId, setUserId] = useState('');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // Auth State
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(false);
   const [routines, setRoutines] = useState([]);
   const [notification, setNotification] = useState(null);
+  const [showServerConfig, setShowServerConfig] = useState(false);
 
-  // UPDATED: Form State now tracks specific durations
+  // Manual Firebase Config State (for users without .env)
+  const [manualConfig, setManualConfig] = useState({
+    apiKey: '',
+    authDomain: '',
+    projectId: ''
+  });
+  const [needsConfig, setNeedsConfig] = useState(!firebaseConfig.apiKey);
+
+  // Form State
   const [formData, setFormData] = useState({
     mood: 7,
     productivity: 7,
     hasCoffee: false,
-    durations: {
-      exercise: 0,
-      reading: 0,
-      meditation: 0,
-      core: 20 // Default "getting ready" time
-    }
+    durations: { exercise: 0, reading: 0, meditation: 0, core: 20 }
   });
 
-  // Calculate total duration derived from individual times
   const totalDuration = Object.values(formData.durations).reduce((a, b) => parseInt(a) + parseInt(b), 0);
 
-  // Load User from local storage on mount
+  // Listen for auth state changes
   useEffect(() => {
-    const savedUser = localStorage.getItem('solver_user_id');
-    if (savedUser) {
-      setUserId(savedUser);
-      setIsLoggedIn(true);
+    if (auth) {
+      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        if (currentUser) {
+            // Automatically fetch data when logged in
+            fetchRoutines(currentUser.email); 
+        }
+      });
+      return () => unsubscribe();
     }
-  }, []);
+  }, [needsConfig]);
 
   const showNotification = (type, message) => {
     setNotification({ type, message });
-    setTimeout(() => setNotification(null), 4000);
+    setTimeout(() => setNotification(null), 6000);
   };
 
   const handleApiSave = (e) => {
@@ -53,22 +85,43 @@ export default function App() {
     localStorage.setItem('solver_api_url', url);
   };
 
-  const handleLogin = (e) => {
-    e.preventDefault();
-    if (userId.trim().length > 0) {
-      localStorage.setItem('solver_user_id', userId);
-      setIsLoggedIn(true);
-      fetchRoutines();
+  // --- GOOGLE LOGIN LOGIC ---
+  const handleGoogleLogin = async () => {
+    if (!auth) {
+        // Try to init with manual config if .env was missing
+        try {
+            const app = initializeApp(manualConfig);
+            auth = getAuth(app);
+            setNeedsConfig(false);
+        } catch (e) {
+            showNotification('error', 'Invalid Configuration Details');
+            return;
+        }
+    }
+
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+      showNotification('success', 'Authenticated with Google');
+    } catch (error) {
+      console.error(error);
+      // SPECIFIC ERROR HANDLING FOR MISSING CONSOLE CONFIG
+      if (error.code === 'auth/configuration-not-found' || error.code === 'auth/operation-not-allowed') {
+        showNotification('error', 'Enable "Google" in Firebase Console > Authentication > Sign-in method');
+      } else {
+        showNotification('error', 'Login Failed: ' + error.message);
+      }
     }
   };
 
-  const handleLogout = () => {
-    setIsLoggedIn(false);
-    localStorage.removeItem('solver_user_id');
-    setRoutines([]);
-    setUserId('');
+  const handleLogout = async () => {
+    if (auth) {
+        await signOut(auth);
+        setRoutines([]);
+    }
   };
 
+  // --- DATA LOGIC ---
   const updateDuration = (key, value) => {
     setFormData(prev => ({
       ...prev,
@@ -76,23 +129,21 @@ export default function App() {
     }));
   };
 
-  const fetchRoutines = async () => {
-    if (!apiUrl || !userId) return;
+  const fetchRoutines = async (email) => {
+    if (!apiUrl || !email) return;
     setLoading(true);
     try {
-      // Append /routines and query param for userId
+      // Use EMAIL as the User ID for the backend
       const baseUrl = apiUrl.endsWith('/routines') ? apiUrl : `${apiUrl}/routines`;
-      const endpoint = `${baseUrl}?userId=${encodeURIComponent(userId)}`;
+      const endpoint = `${baseUrl}?userId=${encodeURIComponent(email)}`;
       
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error('Network response was not ok');
       
       const data = await response.json();
       setRoutines(data);
-      if(activeTab === 'dashboard' && isLoggedIn) showNotification('success', 'Data refreshed successfully');
     } catch (error) {
       console.error("Fetch error:", error);
-      showNotification('error', 'Failed to fetch data. Check API URL.');
     } finally {
       setLoading(false);
     }
@@ -107,7 +158,6 @@ export default function App() {
 
     setLoading(true);
     
-    // Construct activities list based on durations > 0
     const activityList = [];
     if (formData.hasCoffee) activityList.push('coffee');
     if (formData.durations.exercise > 0) activityList.push('exercise');
@@ -115,7 +165,7 @@ export default function App() {
     if (formData.durations.meditation > 0) activityList.push('meditation');
     
     const payload = {
-      userId: userId,
+      userId: user.email, // Send Google Email as ID
       duration: totalDuration,
       mood: parseInt(formData.mood),
       productivity: parseInt(formData.productivity),
@@ -135,7 +185,6 @@ export default function App() {
       if (!response.ok) throw new Error('Failed to submit');
 
       showNotification('success', 'Routine logged via Optimization Engine.');
-      // Reset daily vars but keep core routine
       setFormData(prev => ({
         ...prev, 
         mood: 7, 
@@ -143,7 +192,7 @@ export default function App() {
         hasCoffee: false,
         durations: { ...prev.durations, exercise: 0, reading: 0, meditation: 0 }
       }));
-      fetchRoutines();
+      fetchRoutines(user.email);
       setActiveTab('dashboard');
     } catch (error) {
       showNotification('error', 'Submission failed.');
@@ -154,12 +203,11 @@ export default function App() {
 
   const switchTab = (tab) => {
     setActiveTab(tab);
-    if (tab === 'dashboard' && routines.length === 0) {
-      fetchRoutines();
+    if (tab === 'dashboard' && routines.length === 0 && user) {
+      fetchRoutines(user.email);
     }
   };
 
-  // Shared Background Component
   const BackgroundEffects = () => (
     <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10 bg-slate-950">
       <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-500/10 rounded-full blur-[100px] animate-pulse" style={{animationDuration: '4s'}} />
@@ -168,73 +216,113 @@ export default function App() {
     </div>
   );
 
-  // Login Screen
-  if (!isLoggedIn) {
+  // --- LOGIN SCREEN ---
+  if (!user) {
     return (
       <div className="min-h-screen font-sans flex items-center justify-center p-4 relative text-slate-100">
         <BackgroundEffects />
-        <div className="w-full max-w-md bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl shadow-indigo-500/10 relative overflow-hidden">
-           {/* Decorative Top Border */}
+        <div className="w-full max-w-md bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-3xl p-8 shadow-2xl shadow-indigo-500/10 relative overflow-hidden animate-in fade-in zoom-in-95 duration-500">
            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500" />
            
-          <div className="text-center mb-10 mt-2">
+          <div className="text-center mb-8 mt-2">
             <h1 className="text-4xl font-extrabold tracking-tight bg-gradient-to-br from-white via-indigo-200 to-slate-400 bg-clip-text text-transparent mb-2">
               Solver Society
             </h1>
-            <p className="text-indigo-200/60 text-sm font-medium tracking-widest uppercase">Optimization Engine</p>
+            <p className="text-indigo-200/60 text-xs font-medium tracking-widest uppercase">Optimization Engine Access</p>
           </div>
-          
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Your Name</label>
-              <div className="relative group">
-                <User className="absolute left-4 top-3.5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" size={18} />
-                <input 
-                  type="text" 
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
-                  placeholder="Enter Name (e.g. Solver001)"
-                  className="w-full bg-slate-950/50 border border-slate-700/50 rounded-xl py-3.5 pl-12 pr-4 text-slate-200 placeholder:text-slate-600 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 outline-none transition-all shadow-inner"
-                  required
-                />
-              </div>
-            </div>
 
-            <div className="space-y-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider ml-1">Gateway Endpoint</label>
-              <div className="relative group">
-                <Server className="absolute left-4 top-3.5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" size={18} />
+          {/* CONFIGURATION NEEDED SCREEN (If .env is missing) */}
+          {needsConfig ? (
+            <div className="space-y-4">
+                <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-amber-200 text-sm flex gap-3 items-start">
+                    <ShieldAlert size={20} className="shrink-0 mt-0.5" />
+                    <div>
+                        <p className="font-bold mb-1">Firebase Config Missing</p>
+                        <p className="opacity-80">Please add your Firebase keys to <code>.env</code> or enter them below for temporary access.</p>
+                    </div>
+                </div>
+                
                 <input 
-                  type="text" 
-                  value={apiUrl}
-                  onChange={handleApiSave}
-                  placeholder="AWS API Gateway URL..."
-                  className="w-full bg-slate-950/50 border border-slate-700/50 rounded-xl py-3.5 pl-12 pr-4 text-slate-200 placeholder:text-slate-600 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 outline-none transition-all shadow-inner"
-                  required
+                    type="text" 
+                    placeholder="API Key"
+                    className="w-full bg-slate-950/50 border border-slate-700/50 rounded-lg p-3 text-sm text-slate-300"
+                    value={manualConfig.apiKey}
+                    onChange={(e) => setManualConfig({...manualConfig, apiKey: e.target.value})}
                 />
-              </div>
+                 <input 
+                    type="text" 
+                    placeholder="Auth Domain (e.g. app.firebaseapp.com)"
+                    className="w-full bg-slate-950/50 border border-slate-700/50 rounded-lg p-3 text-sm text-slate-300"
+                    value={manualConfig.authDomain}
+                    onChange={(e) => setManualConfig({...manualConfig, authDomain: e.target.value})}
+                />
+                 <input 
+                    type="text" 
+                    placeholder="Project ID"
+                    className="w-full bg-slate-950/50 border border-slate-700/50 rounded-lg p-3 text-sm text-slate-300"
+                    value={manualConfig.projectId}
+                    onChange={(e) => setManualConfig({...manualConfig, projectId: e.target.value})}
+                />
+                <button 
+                    onClick={handleGoogleLogin}
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-xl transition-all"
+                >
+                    Save & Connect
+                </button>
             </div>
+          ) : (
+            // STANDARD LOGIN BUTTON
+            <div className="space-y-6">
+                <button 
+                onClick={handleGoogleLogin}
+                className="w-full bg-white hover:bg-slate-200 text-slate-900 font-bold py-4 rounded-xl transition-all flex justify-center items-center gap-3 shadow-lg hover:-translate-y-0.5"
+                >
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+                </svg>
+                <span>Sign in with Google</span>
+                </button>
+            </div>
+          )}
 
+          {/* Hidden Server Config */}
+          <div className="mt-8 pt-4 border-t border-white/5 text-center">
             <button 
-              type="submit" 
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-4 rounded-xl transition-all flex justify-center items-center gap-2 shadow-lg shadow-indigo-600/20 hover:shadow-indigo-600/40 hover:-translate-y-0.5 mt-4"
+                onClick={() => setShowServerConfig(!showServerConfig)}
+                className="text-xs text-slate-500 hover:text-indigo-400 flex items-center justify-center gap-1 mx-auto transition-colors"
             >
-              <span>Initialize Session</span>
-              <ChevronRight size={18} />
+                <Settings size={12} />
+                <span>Connection Settings</span>
             </button>
-          </form>
+            
+            {showServerConfig && (
+                <div className="mt-4 animate-in fade-in slide-in-from-top-2">
+                    <div className="relative group text-left">
+                        <Server className="absolute left-3 top-2.5 text-slate-500" size={14} />
+                        <input 
+                        type="text" 
+                        value={apiUrl}
+                        onChange={handleApiSave}
+                        placeholder="Paste AWS API Gateway URL..."
+                        className="w-full bg-slate-950/30 border border-slate-700/50 rounded-lg py-2 pl-9 pr-3 text-xs text-slate-300 focus:border-indigo-500/50 outline-none"
+                        />
+                    </div>
+                </div>
+            )}
+          </div>
         </div>
       </div>
     );
   }
 
-  // Main Dashboard
+  // --- DASHBOARD ---
   return (
     <div className="min-h-screen text-slate-100 font-sans selection:bg-indigo-500 selection:text-white p-4 md:p-8 relative">
       <BackgroundEffects />
       <div className="max-w-5xl mx-auto">
-        
-        {/* Header */}
         <header className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-white/5 pb-6">
           <div>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-white via-indigo-100 to-slate-400 bg-clip-text text-transparent">
@@ -245,24 +333,24 @@ export default function App() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <p className="text-slate-400 text-sm">
-                Active Agent: <span className="text-indigo-300 font-mono tracking-wide">{userId}</span>
-              </p>
+              <div className="flex flex-col">
+                <p className="text-slate-400 text-sm">Active Agent</p>
+                <p className="text-indigo-300 font-mono text-xs tracking-wide">{user.email}</p>
+              </div>
             </div>
           </div>
           
           <div className="flex flex-col md:flex-row gap-3 items-end md:items-center">
-            {/* API URL Display removed */}
             <button 
               onClick={handleLogout}
-              className="px-4 py-2 bg-slate-800/40 hover:bg-slate-800/60 text-slate-300 border border-white/5 rounded-lg text-sm font-medium transition-colors backdrop-blur-sm"
+              className="px-4 py-2 bg-slate-800/40 hover:bg-slate-800/60 text-slate-300 border border-white/5 rounded-lg text-sm font-medium transition-colors backdrop-blur-sm flex items-center gap-2"
             >
+              <LogOut size={14} />
               Terminate Session
             </button>
           </div>
         </header>
 
-        {/* Notifications */}
         {notification && (
           <div className={`fixed top-6 right-6 p-4 rounded-xl shadow-2xl border flex items-center gap-3 animate-in fade-in slide-in-from-top-4 z-50 backdrop-blur-md ${
             notification.type === 'error' ? 'bg-red-950/80 border-red-500/30 text-red-100' : 'bg-emerald-950/80 border-emerald-500/30 text-emerald-100'
@@ -272,7 +360,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Navigation Tabs */}
         <div className="flex justify-center mb-8">
             <div className="bg-slate-900/40 p-1.5 rounded-2xl border border-white/5 inline-flex backdrop-blur-sm shadow-xl">
                 <button 
@@ -300,7 +387,6 @@ export default function App() {
             </div>
         </div>
 
-        {/* INPUT VIEW */}
         {activeTab === 'input' && (
           <div className="bg-slate-900/40 border border-white/10 rounded-3xl p-6 md:p-10 backdrop-blur-xl shadow-2xl animate-in zoom-in-95 duration-300">
             <div className="flex items-center justify-between mb-10 pb-6 border-b border-white/5">
@@ -313,7 +399,6 @@ export default function App() {
                         <p className="text-slate-400 text-sm mt-0.5">Record morning metrics.</p>
                     </div>
                 </div>
-                {/* Total Duration Display */}
                 <div className="text-right bg-slate-950/30 px-5 py-3 rounded-2xl border border-white/5">
                     <p className="text-slate-400 text-[10px] uppercase tracking-widest font-bold mb-1">Total Time</p>
                     <p className="text-3xl font-mono font-bold text-white leading-none">
@@ -323,8 +408,6 @@ export default function App() {
             </div>
             
             <form onSubmit={handleSubmit} className="space-y-12">
-              
-              {/* Activity Time Allocator */}
               <div className="space-y-6">
                 <label className="text-slate-300 font-bold text-xs uppercase tracking-widest flex items-center gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
@@ -348,7 +431,6 @@ export default function App() {
                             className="w-full h-1.5 bg-slate-700/50 rounded-full appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
                         />
                     </div>
-
                     {/* Reading */}
                     <div className="bg-slate-800/20 p-5 rounded-2xl border border-white/5 hover:bg-slate-800/40 transition-colors group">
                         <div className="flex justify-between items-center mb-4">
@@ -365,7 +447,6 @@ export default function App() {
                             className="w-full h-1.5 bg-slate-700/50 rounded-full appearance-none cursor-pointer accent-purple-500 hover:accent-purple-400"
                         />
                     </div>
-
                     {/* Meditation */}
                     <div className="bg-slate-800/20 p-5 rounded-2xl border border-white/5 hover:bg-slate-800/40 transition-colors group">
                         <div className="flex justify-between items-center mb-4">
@@ -382,8 +463,7 @@ export default function App() {
                             className="w-full h-1.5 bg-slate-700/50 rounded-full appearance-none cursor-pointer accent-cyan-500 hover:accent-cyan-400"
                         />
                     </div>
-
-                    {/* Core/Misc */}
+                    {/* Core */}
                     <div className="bg-slate-800/20 p-5 rounded-2xl border border-white/5 hover:bg-slate-800/40 transition-colors group">
                         <div className="flex justify-between items-center mb-4">
                             <div className="flex items-center gap-3 text-slate-400">
@@ -402,7 +482,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Mood & Productivity Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-4 p-6 bg-gradient-to-br from-cyan-950/30 to-slate-900/30 rounded-2xl border border-cyan-900/20 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 rounded-full blur-2xl -mr-10 -mt-10 group-hover:bg-cyan-500/10 transition-colors"></div>
@@ -441,7 +520,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Coffee Toggle */}
               <div>
                 <button
                     type="button"
@@ -469,6 +547,54 @@ export default function App() {
                 </button>
               </div>
 
+              {/* LIVE FORMULA PREVIEW */}
+              <div className="bg-slate-950/50 p-4 rounded-xl border border-indigo-500/20 mb-6 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-full bg-gradient-to-l from-slate-950 to-transparent z-10 pointer-events-none md:hidden"></div>
+                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                    <Calculator size={14} className="text-indigo-400" /> Live Formula Preview
+                </h3>
+                
+                <div className="overflow-x-auto pb-2">
+                    <div className="flex items-center text-sm font-mono min-w-max">
+                        {/* Term 1: Raw Output */}
+                        <div className="flex flex-col items-center p-2 rounded-lg bg-slate-900/50 border border-white/5">
+                            <div className="flex gap-2 mb-1">
+                                <span className="text-cyan-400 font-bold" title="Mood">{formData.mood}</span>
+                                <span className="text-slate-500">+</span>
+                                <span className="text-emerald-400 font-bold" title="Productivity">{formData.productivity}</span>
+                            </div>
+                            <div className="w-full h-px bg-slate-600 my-1"></div>
+                            <span className="text-slate-300 font-bold" title="Duration">{totalDuration || 1}</span>
+                        </div>
+
+                        {/* Multiplier */}
+                        <div className="mx-3 text-slate-500 font-bold">×</div>
+                        <div className="flex flex-col items-center">
+                            <span className="text-indigo-400 font-bold">10</span>
+                            <span className="text-[10px] text-slate-600 uppercase tracking-wider">Scale</span>
+                        </div>
+
+                        {/* Coffee Mod */}
+                        <div className="mx-3 text-slate-500 font-bold">×</div>
+                        <div className={`flex flex-col items-center p-2 rounded-lg border transition-colors ${formData.hasCoffee ? 'bg-amber-950/20 border-amber-500/30' : 'bg-slate-900/50 border-white/5'}`}>
+                            <span className={`font-bold ${formData.hasCoffee ? "text-amber-400" : "text-slate-500"}`}>
+                                {formData.hasCoffee ? "1.2" : "1.0"}
+                            </span>
+                            <span className="text-[10px] text-slate-600 uppercase tracking-wider">Caffeine</span>
+                        </div>
+
+                        {/* Result */}
+                        <div className="mx-4 text-slate-500 font-bold">=</div>
+                        <div className="relative group">
+                            <div className="absolute -inset-2 bg-indigo-500/20 rounded-lg blur-lg group-hover:bg-indigo-500/30 transition-all"></div>
+                            <span className="text-2xl font-bold text-white relative">
+                                {(( (parseInt(formData.mood) + parseInt(formData.productivity)) * 10 / (totalDuration || 1) ) * (formData.hasCoffee ? 1.2 : 1.0)).toFixed(1)}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+              </div>
+
               <button 
                 type="submit" 
                 disabled={loading}
@@ -490,7 +616,7 @@ export default function App() {
                 Performance Metrics
               </h2>
               <button 
-                onClick={fetchRoutines}
+                onClick={() => fetchRoutines(user.email)}
                 className="p-2.5 bg-slate-800/50 hover:bg-indigo-600/20 hover:text-indigo-300 border border-white/5 rounded-xl text-slate-400 transition-all shadow-lg"
                 title="Refresh Data"
               >
@@ -498,7 +624,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Chart */}
             <div className="bg-slate-900/40 border border-white/10 rounded-3xl p-6 h-96 backdrop-blur-xl shadow-2xl relative overflow-hidden">
                 <div className="absolute top-0 right-0 w-full h-full bg-gradient-to-b from-indigo-500/5 to-transparent pointer-events-none" />
               {routines.length > 0 ? (
@@ -533,13 +658,12 @@ export default function App() {
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-500">
                   <Activity size={64} className="mb-4 opacity-10" />
-                  <p className="text-sm font-medium">No data found for user <span className="text-indigo-400 font-mono">{userId}</span>.</p>
+                  <p className="text-sm font-medium">No data found for user <span className="text-indigo-400 font-mono">{user.email}</span>.</p>
                   <p className="text-xs mt-2 opacity-60">Start logging to see analytics.</p>
                 </div>
               )}
             </div>
 
-            {/* Data Table */}
             <div className="bg-slate-900/40 border border-white/10 rounded-3xl overflow-hidden backdrop-blur-xl shadow-2xl">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm text-slate-300">
